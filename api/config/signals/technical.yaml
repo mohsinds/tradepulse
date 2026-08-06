@@ -1,0 +1,36 @@
+trend:
+  weight: 0.25
+  fast: 20
+  slow: 50
+  atr_period: 14
+
+momentum:
+  weight: 0.2
+  lookback: 20
+  threshold: 0.05
+
+meanrev:
+  weight: 0.15
+  rsi_period: 14
+  oversold: 30
+  overbought: 70
+  zscore_period: 20
+
+breakout:
+  weight: 0.15
+  channel_period: 20
+  atr_period: 14
+  atr_buffer: 0.25
+
+volatility:
+  weight: 0.1
+  atr_period: 14
+  regime_period: 100
+  squeeze_percentile: 0.25
+
+volume:
+  weight: 0.15
+  lookback: 20
+  climax_sigma: 2.0
+  absorption_ratio: 0.35
+  spread_percentile: 0.7

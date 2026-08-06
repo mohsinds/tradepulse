@@ -1,0 +1,17 @@
+XAUUSD:
+  venue: ibkr
+  contract_type: spot
+  underlying: GOLD
+  exchange: SMART
+  currency: USD
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+  shared_signals:
+    - trend
+    - momentum
+    - meanrev
+    - breakout
+    - volatility
+    - volume
+  signals: {}

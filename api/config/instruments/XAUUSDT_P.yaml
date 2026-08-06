@@ -1,0 +1,18 @@
+XAUUSDT.P:
+  venue: ccxt
+  contract_type: perpetual
+  underlying: GOLD
+  exchange: bybit
+  currency: USDT
+  llm:
+    provider: openrouter
+    model: anthropic/claude-3.5-sonnet
+  shared_signals:
+    - trend
+    - momentum
+    - meanrev
+    - breakout
+    - volatility
+    - volume
+    - funding_rate
+  signals: {}

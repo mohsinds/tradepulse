@@ -1,0 +1,8 @@
+funding_rate:
+  weight: 0.2
+  # 8h funding rate thresholds, expressed as decimals
+  neutral_band: 0.0001
+  extreme: 0.0005
+  periods_per_day: 3
+  # penalty applied to ranked ideas when funding cost works against the side
+  unfavorable_penalty: 0.5

@@ -1,0 +1,7 @@
+vectorbt>=0.26
+pandas>=2.2
+numpy>=1.26
+pyyaml>=6.0
+ccxt>=4.2
+ib-async>=1.0.1
+yfinance>=0.2.37

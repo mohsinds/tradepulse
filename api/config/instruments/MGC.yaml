@@ -1,0 +1,19 @@
+MGC:
+  venue: ibkr
+  contract_type: future
+  underlying: GOLD
+  exchange: COMEX
+  currency: USD
+  multiplier: 10
+  roll_days: 5
+  llm:
+    provider: anthropic
+    model: claude-3-5-sonnet-latest
+  shared_signals:
+    - trend
+    - momentum
+    - meanrev
+    - breakout
+    - volatility
+    - volume
+  signals: {}

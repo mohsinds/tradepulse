@@ -1,0 +1,17 @@
+BTC/USD:
+  venue: ccxt
+  contract_type: spot
+  underlying: BTC
+  exchange: bybit
+  currency: USD
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+  shared_signals:
+    - trend
+    - momentum
+    - meanrev
+    - breakout
+    - volatility
+    - volume
+  signals: {}

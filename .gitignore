@@ -1,0 +1,21 @@
+# Environment secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+web/.next/
+
+# Local Devin config
+.devin/config.local.json
+
+# macOS
+.DS_Store
