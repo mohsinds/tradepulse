@@ -13,6 +13,15 @@ from .risk import UnderlyingRiskGuard
 logger = logging.getLogger(__name__)
 
 
+class ExposureUnavailableError(RuntimeError):
+    """Raised when current exposure cannot be established for every venue.
+
+    The underlying-level cap spans venues, so a venue that cannot report its
+    positions makes the check unsound. Failing closed is mandatory: a cap that
+    silently treats an unreachable venue as flat is worse than no cap.
+    """
+
+
 def _to_decimal(value: Any, default: Optional[Decimal] = None) -> Optional[Decimal]:
     if value is None:
         return default
@@ -108,29 +117,35 @@ class PaperExecutionEngine(ExecutionEngine):
         )
 
     async def _positions_by_symbol(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Aggregate positions from all connected adapters keyed by symbol."""
+        """Aggregate positions from every configured adapter, keyed by symbol.
+
+        Connects adapters that are not connected yet. Raises
+        :class:`ExposureUnavailableError` if any adapter cannot report its
+        positions, so the caller rejects rather than under-counting exposure.
+        """
         all_positions: Dict[str, List[Dict[str, Any]]] = {}
         config = load_all()
         symbol_to_underlying = self._symbol_to_underlying(config)
 
         for adapter_name, adapter in self.adapters.items():
             if not getattr(adapter, "connected", False):
-                continue
+                try:
+                    await adapter.connect()
+                except Exception as exc:  # noqa: BLE001
+                    raise ExposureUnavailableError(
+                        f"Cannot connect adapter '{adapter_name}' to read positions: {exc}"
+                    ) from exc
             try:
                 positions = await adapter.get_positions()
-            except NotImplementedError:
-                logger.warning(
-                    "Adapter %s does not implement get_positions", adapter_name
-                )
-                continue
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Adapter %s get_positions failed: %s", adapter_name, exc
-                )
-                continue
+                raise ExposureUnavailableError(
+                    f"Adapter '{adapter_name}' could not report positions: {exc}"
+                ) from exc
 
             if positions is None:
-                continue
+                raise ExposureUnavailableError(
+                    f"Adapter '{adapter_name}' returned no position data"
+                )
             for pos in positions:
                 if not isinstance(pos, dict):
                     continue
@@ -196,7 +211,15 @@ class PaperExecutionEngine(ExecutionEngine):
             account_value=self.account_value,
             underlying_configs=self.underlying_configs,
         )
-        positions_by_symbol = await self._positions_by_symbol()
+        try:
+            positions_by_symbol = await self._positions_by_symbol()
+        except ExposureUnavailableError as exc:
+            logger.warning("Risk check could not run: %s", exc)
+            return {
+                "status": "risk_rejected",
+                "risk": {"ok": False, "reason": str(exc)},
+                "order": self._order_to_dict(order),
+            }
         risk = await risk_guard.check_order(order, positions_by_symbol)
 
         if not risk.ok:
@@ -248,15 +271,6 @@ class PaperExecutionEngine(ExecutionEngine):
                 "error": f"No adapter for venue '{instrument.venue}'",
             }
 
-        if not getattr(adapter, "connected", False):
-            try:
-                await adapter.connect()
-            except Exception as exc:  # noqa: BLE001
-                return {
-                    "status": "error",
-                    "error": f"Failed to connect adapter {instrument.venue}: {exc}",
-                }
-
         signal: Dict[str, Any] = {
             "name": "ranked_idea",
             "direction": idea.get("direction", "long"),
@@ -268,4 +282,21 @@ class PaperExecutionEngine(ExecutionEngine):
         signal["rationale"] = idea.get("rationale")
 
         order = await self.route(instrument, signal)
+
+        # Without a price the proposed notional is 0%, which makes the
+        # underlying cap inert. Tolerable for a simulated fill, never for a
+        # live one.
+        if order.price is None and not self.paper:
+            return {
+                "status": "risk_rejected",
+                "risk": {
+                    "ok": False,
+                    "reason": (
+                        f"No price available for {symbol}; cannot size exposure "
+                        "for a live order"
+                    ),
+                },
+                "order": self._order_to_dict(order),
+            }
+
         return await self.submit(adapter, order)

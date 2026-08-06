@@ -193,3 +193,115 @@ class TestPaperExecutionEngine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order.side, "sell")
         self.assertEqual(order.quantity, Decimal("0.05"))
         self.assertEqual(order.price, Decimal("2600"))
+
+
+class TestCrossVenueExposure(unittest.IsolatedAsyncioTestCase):
+    """The underlying cap spans venues, so it must not under-count or fail open."""
+
+    def _config(self) -> dict:
+        return {
+            "instruments": {
+                "MGC": {"venue": "ibkr", "underlying": "GOLD", "multiplier": "10"},
+                "XAUUSDT.P": {
+                    "venue": "ccxt",
+                    "underlying": "GOLD",
+                    "multiplier": "1",
+                },
+            },
+            "underlyings": {"GOLD": {"max_combined_position_pct": 0.05}},
+        }
+
+    def _engine(self, ibkr, ccxt) -> PaperExecutionEngine:
+        return PaperExecutionEngine(
+            adapters={"ibkr": ibkr, "ccxt": ccxt},
+            account_value=ACCOUNT_VALUE,
+            underlying_configs={"GOLD": {"max_combined_position_pct": 0.05}},
+            paper=False,
+        )
+
+    async def test_disconnected_other_venue_still_counted(self) -> None:
+        ibkr = FakeBroker(
+            "ibkr",
+            {"sandbox": False},
+            positions=[
+                {
+                    "symbol": "MGC",
+                    "quantity": Decimal("0.04"),
+                    "last": Decimal("2500"),
+                    "multiplier": "10",
+                }
+            ],
+        )
+        ccxt = FakeBroker("ccxt", {"sandbox": False})
+
+        engine = self._engine(ibkr, ccxt)
+        with patch("api.execution.engine.load_all", return_value=self._config()):
+            result = await engine.execute_idea(
+                {
+                    "instrument": "XAUUSDT.P",
+                    "direction": "long",
+                    "quantity": "2.25",
+                    "price": "2000",
+                }
+            )
+
+        self.assertEqual(result["status"], "risk_rejected")
+        self.assertTrue(ibkr.connected)
+
+    async def test_unreadable_venue_fails_closed(self) -> None:
+        ibkr = FakeBroker("ibkr", {"sandbox": False})
+
+        async def boom():
+            raise ConnectionError("IB Gateway down")
+
+        ibkr.get_positions = boom
+        ccxt = FakeBroker("ccxt", {"sandbox": False})
+
+        placed: list = []
+
+        async def record(order):
+            placed.append(order)
+            return "order-1"
+
+        ccxt.place_order = record
+
+        engine = self._engine(ibkr, ccxt)
+        with patch("api.execution.engine.load_all", return_value=self._config()):
+            result = await engine.execute_idea(
+                {
+                    "instrument": "XAUUSDT.P",
+                    "direction": "long",
+                    "quantity": "0.1",
+                    "price": "2000",
+                }
+            )
+
+        self.assertEqual(result["status"], "risk_rejected")
+        self.assertIn("could not report positions", result["risk"]["reason"])
+        self.assertEqual(placed, [])
+
+    async def test_live_order_without_price_rejected(self) -> None:
+        ibkr = FakeBroker("ibkr", {"sandbox": False})
+        ccxt = FakeBroker("ccxt", {"sandbox": False})
+
+        engine = self._engine(ibkr, ccxt)
+        with patch("api.execution.engine.load_all", return_value=self._config()):
+            result = await engine.execute_idea(
+                {"instrument": "XAUUSDT.P", "direction": "long"}
+            )
+
+        self.assertEqual(result["status"], "risk_rejected")
+        self.assertIn("cannot size exposure", result["risk"]["reason"])
+
+    async def test_paper_order_without_price_still_fills(self) -> None:
+        ibkr = FakeBroker("ibkr", {"sandbox": False})
+        ccxt = FakeBroker("ccxt", {"sandbox": False})
+
+        engine = self._engine(ibkr, ccxt)
+        engine.paper = True
+        with patch("api.execution.engine.load_all", return_value=self._config()):
+            result = await engine.execute_idea(
+                {"instrument": "XAUUSDT.P", "direction": "long"}
+            )
+
+        self.assertEqual(result["status"], "paper_filled")
