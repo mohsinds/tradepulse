@@ -24,7 +24,7 @@
 ## Verification
 
 ```bash
-python -m unittest discover -s tests   # 120 tests, fully offline (no network, no API keys)
+python -m unittest discover -s tests   # 124 tests, fully offline (no network, no API keys)
 ```
 
 ## Scope

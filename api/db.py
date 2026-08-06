@@ -36,6 +36,9 @@ if DATABASE_URL:
 class DecisionLog(Base):
     __tablename__ = "decision_logs"
 
+    # ``timestamp`` is part of the primary key so TimescaleDB can partition
+    # ``decision_logs`` on it (a hypertable's unique indexes must include the
+    # partitioning column).
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -43,7 +46,9 @@ class DecisionLog(Base):
     )
     timestamp = Column(
         DateTime(timezone=True),
+        primary_key=True,
         default=func.now(),
+        server_default=func.now(),
     )
     run_id = Column(String, index=True, nullable=False)
     source = Column(String, nullable=False, default="system")

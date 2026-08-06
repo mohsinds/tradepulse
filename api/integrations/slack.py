@@ -244,16 +244,24 @@ async def handle_action(
 def get_slack_app(
     execution_engine: Optional[PaperExecutionEngine] = None,
     session_factory: Optional[Any] = None,
-) -> Any:
+) -> Optional[Any]:
     """Create and configure a Bolt AsyncApp with action handlers.
 
-    The returned app is also stored as the module default for
-    ``slack_request_handler``.
+    Returns ``None`` unless both ``SLACK_BOT_TOKEN`` and
+    ``SLACK_SIGNING_SECRET`` are set (Bolt refuses to construct or verify
+    requests without them), so the rest of the app can run in log-only mode
+    without Slack credentials.  The returned app is also stored as the module
+    default for ``slack_request_handler``.
     """
     from slack_bolt.async_app import AsyncApp
 
-    token = os.getenv("SLACK_BOT_TOKEN") or ""
-    signing_secret = os.getenv("SLACK_SIGNING_SECRET") or ""
+    token = os.getenv("SLACK_BOT_TOKEN")
+    signing_secret = os.getenv("SLACK_SIGNING_SECRET")
+    if not token or not signing_secret:
+        logger.warning(
+            "SLACK_BOT_TOKEN/SLACK_SIGNING_SECRET not set; Slack integration disabled"
+        )
+        return None
 
     app = AsyncApp(token=token, signing_secret=signing_secret)
 
@@ -288,7 +296,10 @@ async def slack_request_handler(request: Any, app: Optional[Any] = None) -> Resp
 
     app = app or _default_slack_app
     if app is None:
-        raise RuntimeError("No Slack AsyncApp configured")
+        return Response(
+            content="Slack integration is not configured",
+            status_code=503,
+        )
 
     body = await request.body()
     body_str = body.decode("utf-8") if isinstance(body, bytes) else str(body)
@@ -298,16 +309,21 @@ async def slack_request_handler(request: Any, app: Optional[Any] = None) -> Resp
     bolt_req = AsyncBoltRequest(body=body_str, query=query, headers=headers)
     bolt_resp = await app.async_dispatch(bolt_req)
 
-    flat_headers: list = []
-    for key, value in bolt_resp.headers.items():
-        if isinstance(value, list):
-            for v in value:
-                flat_headers.append((key, v))
-        else:
-            flat_headers.append((key, value))
+    response = Response(content=bolt_resp.body, status_code=bolt_resp.status)
 
-    return Response(
-        content=bolt_resp.body,
-        status_code=bolt_resp.status,
-        headers=flat_headers,
-    )
+    # Bolt returns a header map whose values may be lists (e.g. multiple
+    # Set-Cookie).  Starlette's ``headers=`` argument only accepts a mapping of
+    # single values, so append to the raw headers instead, replacing any
+    # defaults Response already set for the same key.
+    overridden = {key.lower().encode("latin-1") for key in bolt_resp.headers}
+    response.raw_headers[:] = [
+        (key, value) for key, value in response.raw_headers if key not in overridden
+    ]
+    for key, value in bolt_resp.headers.items():
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            response.raw_headers.append(
+                (key.lower().encode("latin-1"), str(item).encode("latin-1"))
+            )
+
+    return response

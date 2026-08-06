@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,8 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from api.execution import PaperExecutionEngine
 from api.integrations.slack import (
     generate_approval_id,
+    get_slack_app,
     handle_action,
     post_ranked_signal,
+    slack_request_handler,
 )
 
 
@@ -150,3 +153,42 @@ class TestSlackIntegration(unittest.IsolatedAsyncioTestCase):
     def test_generate_approval_id_is_short(self) -> None:
         run_id = generate_approval_id()
         self.assertEqual(len(run_id), 12)
+
+
+class TestSlackAppLifecycle(unittest.IsolatedAsyncioTestCase):
+    def test_get_slack_app_returns_none_without_token(self) -> None:
+        with patch.dict(
+            os.environ, {"SLACK_BOT_TOKEN": "", "SLACK_SIGNING_SECRET": "shh"}
+        ):
+            self.assertIsNone(get_slack_app())
+
+    def test_get_slack_app_returns_none_without_signing_secret(self) -> None:
+        with patch.dict(
+            os.environ, {"SLACK_BOT_TOKEN": "xoxb-x", "SLACK_SIGNING_SECRET": ""}
+        ):
+            self.assertIsNone(get_slack_app())
+
+    async def test_request_handler_returns_503_without_app(self) -> None:
+        request = MagicMock()
+        with patch("api.integrations.slack._default_slack_app", None):
+            response = await slack_request_handler(request, app=None)
+        self.assertEqual(response.status_code, 503)
+
+    async def test_request_handler_flattens_bolt_headers(self) -> None:
+        app = MagicMock()
+        bolt_resp = MagicMock()
+        bolt_resp.body = "ok"
+        bolt_resp.status = 200
+        bolt_resp.headers = {"content-type": ["text/plain"], "x-slack": "1"}
+        app.async_dispatch = AsyncMock(return_value=bolt_resp)
+
+        request = MagicMock()
+        request.body = AsyncMock(return_value=b"{}")
+        request.query_params = ""
+        request.headers = {}
+
+        response = await slack_request_handler(request, app=app)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/plain")
+        self.assertEqual(response.headers["x-slack"], "1")
